@@ -1,4 +1,4 @@
-// ⚙️ Cargar variables de entorno (¡primero!)
+// ⚙️ Cargar variables de entorno (solo aplica localmente)
 require('dotenv').config();
 
 const express = require('express');
@@ -9,7 +9,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ✅ Verifica que las variables están cargando correctamente (temporal)
+// ✅ Verificación de variables de entorno
 console.log("🔐 TWILIO_ACCOUNT_SID:", process.env.TWILIO_ACCOUNT_SID ? "OK" : "❌ Missing");
 console.log("🔐 TWILIO_AUTH_TOKEN:", process.env.TWILIO_AUTH_TOKEN ? "OK" : "❌ Missing");
 console.log("🔐 TWILIO_VERIFY_SID:", process.env.TWILIO_VERIFY_SID ? "OK" : "❌ Missing");
@@ -19,7 +19,8 @@ const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
 const verifySid = process.env.TWILIO_VERIFY_SID;
 
-const client = require('twilio')(accountSid, authToken);
+const twilio = require('twilio');
+const client = twilio(accountSid, authToken);
 
 // 🌐 Ruta de prueba
 app.get('/', (req, res) => {
@@ -81,4 +82,5 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`🚀 Servidor escuchando en http://localhost:${PORT}`);
 });
+
 
