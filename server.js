@@ -1,88 +1,76 @@
-const qs = require('qs');
 const express = require('express');
 const cors = require('cors');
-const axios = require('axios');
-
 const app = express();
-const PORT = 5000;
+require('dotenv').config(); // solo si corres localmente
 
+// Configurar middlewares
 app.use(cors());
 app.use(express.json());
 
-// 🔐 CREDENCIALES DIRECTAS (Twilio)
-const accountSid = 'AC22151d92ddd226ff23c654e09f6301db';
-const authToken = 'b7a2221b6118a1c45b426123daaf72b8';
-const serviceSid = 'VA7c55a112f1875f29f21cdeb7a6e9489b';
+// Twilio config
+const accountSid = process.env.TWILIO_ACCOUNT_SID;
+const authToken = process.env.TWILIO_AUTH_TOKEN;
+const verifySid = process.env.TWILIO_VERIFY_SID;
 
-// 📤 Enviar código de verificación por SMS
+const client = require('twilio')(accountSid, authToken);
+
+// Ruta raíz opcional
+app.get('/', (req, res) => {
+  res.send('🔐 BioStrucX Backend Activo');
+});
+
+// ➤ Enviar código SMS
 app.post('/send-code', async (req, res) => {
-  const { phone } = req.body;
-  console.log("📞 Teléfono recibido:", phone);
+  const { phoneNumber } = req.body;
+  console.log("📲 Enviando código a:", phoneNumber);
+
+  if (!phoneNumber) {
+    return res.status(400).json({ success: false, message: "Número no recibido" });
+  }
 
   try {
-    await axios.post(
-      `https://verify.twilio.com/v2/Services/${serviceSid}/Verifications`,
-      qs.stringify({
-        To: phone,
-        Channel: 'sms'
-      }),
-      {
-        auth: {
-          username: accountSid,
-          password: authToken
-        },
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
-        }
-      }
-    );
+    const verification = await client.verify.v2
+      .services(verifySid)
+      .verifications.create({
+        to: phoneNumber,
+        channel: 'sms'
+      });
 
-    console.log(`📨 Enviando código a: ${phone}`);
-    res.status(200).json({ message: 'Código enviado correctamente.' });
-
+    console.log("✅ Código enviado:", verification.sid);
+    res.json({ success: true, sid: verification.sid });
   } catch (error) {
-    console.error('❌ Error al enviar código:', error.response?.data || error.message);
-    res.status(400).json({ message: 'Error al enviar código.' });
+    console.error("❌ Error al enviar código:", error);
+    res.status(500).json({ success: false, error });
   }
 });
 
-// ✅ Verificar el código ingresado por el usuario
+// ➤ Verificar código
 app.post('/verify-code', async (req, res) => {
-  const { phone, code } = req.body;
+  const { phoneNumber, code } = req.body;
+  console.log("🔐 Verificando código para:", phoneNumber, "con código:", code);
+
+  if (!phoneNumber || !code) {
+    return res.status(400).json({ success: false, message: "Faltan datos" });
+  }
 
   try {
-    const response = await axios.post(
-      `https://verify.twilio.com/v2/Services/${serviceSid}/VerificationCheck`,
-      qs.stringify({
-        To: phone,
-        Code: code
-      }),
-      {
-        auth: {
-          username: accountSid,
-          password: authToken
-        },
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
-        }
-      }
-    );
+    const verificationCheck = await client.verify.v2
+      .services(verifySid)
+      .verificationChecks.create({
+        to: phoneNumber,
+        code: code
+      });
 
-    if (response.data.status === 'approved') {
-      console.log('✅ Código correcto');
-      res.status(200).json({ message: 'Verificación exitosa.' });
-    } else {
-      console.log('❌ Código incorrecto');
-      res.status(401).json({ message: 'Código incorrecto.' });
-    }
-
+    console.log("🔁 Resultado:", verificationCheck.status);
+    res.json({ success: verificationCheck.status === 'approved' });
   } catch (error) {
-    console.error('❌ Error al verificar el código:', error.response?.data || error.message);
-    res.status(500).json({ message: 'Error interno en la verificación.' });
+    console.error("❌ Error al verificar código:", error);
+    res.status(500).json({ success: false, error });
   }
 });
 
-// 🚀 Iniciar servidor
+// Iniciar servidor
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`🚀 Servidor escuchando en http://localhost:${PORT}`);
 });
