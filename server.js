@@ -1,20 +1,27 @@
+// ⚙️ Cargar variables de entorno (¡primero!)
+require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const app = express();
-require('dotenv').config(); // solo si corres localmente
 
-// Configurar middlewares
+// 🧠 Middleware
 app.use(cors());
 app.use(express.json());
 
-// Twilio config
+// ✅ Verifica que las variables están cargando correctamente (temporal)
+console.log("🔐 TWILIO_ACCOUNT_SID:", process.env.TWILIO_ACCOUNT_SID ? "OK" : "❌ Missing");
+console.log("🔐 TWILIO_AUTH_TOKEN:", process.env.TWILIO_AUTH_TOKEN ? "OK" : "❌ Missing");
+console.log("🔐 TWILIO_VERIFY_SID:", process.env.TWILIO_VERIFY_SID ? "OK" : "❌ Missing");
+
+// 🔑 Twilio config
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
 const verifySid = process.env.TWILIO_VERIFY_SID;
 
 const client = require('twilio')(accountSid, authToken);
 
-// Ruta raíz opcional
+// 🌐 Ruta de prueba
 app.get('/', (req, res) => {
   res.send('🔐 BioStrucX Backend Activo');
 });
@@ -40,11 +47,11 @@ app.post('/send-code', async (req, res) => {
     res.json({ success: true, sid: verification.sid });
   } catch (error) {
     console.error("❌ Error al enviar código:", error);
-    res.status(500).json({ success: false, error });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// ➤ Verificar código
+// ➤ Verificar código SMS
 app.post('/verify-code', async (req, res) => {
   const { phoneNumber, code } = req.body;
   console.log("🔐 Verificando código para:", phoneNumber, "con código:", code);
@@ -65,12 +72,13 @@ app.post('/verify-code', async (req, res) => {
     res.json({ success: verificationCheck.status === 'approved' });
   } catch (error) {
     console.error("❌ Error al verificar código:", error);
-    res.status(500).json({ success: false, error });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Iniciar servidor
+// 🚀 Iniciar servidor
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`🚀 Servidor escuchando en http://localhost:${PORT}`);
 });
+
