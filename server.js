@@ -9,6 +9,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// 📂 Servir carpeta de clientes como pública
+app.use('/cliente_1', express.static('clients/cliente_1'));
+
 // ✅ Verificación de variables de entorno
 console.log("🔐 TWILIO_ACCOUNT_SID:", process.env.TWILIO_ACCOUNT_SID ? "OK" : "❌ Missing");
 console.log("🔐 TWILIO_AUTH_TOKEN:", process.env.TWILIO_AUTH_TOKEN ? "OK" : "❌ Missing");
@@ -21,6 +24,11 @@ const verifySid = process.env.TWILIO_VERIFY_SID;
 
 const twilio = require('twilio');
 const client = twilio(accountSid, authToken);
+
+// 📋 Lista de usuarios autorizados
+const allowedUsers = {
+  '+447471256650': '/dashboard/cliente_1'
+};
 
 // 🌐 Ruta de prueba
 app.get('/', (req, res) => {
@@ -70,7 +78,21 @@ app.post('/verify-code', async (req, res) => {
       });
 
     console.log("🔁 Resultado:", verificationCheck.status);
-    res.json({ success: verificationCheck.status === 'approved' });
+
+    if (verificationCheck.status === 'approved') {
+      const redirect = allowedUsers[phoneNumber];
+      if (redirect) {
+        return res.json({ success: true, status: 'allowed', redirect });
+      } else {
+        return res.status(403).json({
+          success: false,
+          status: 'denied',
+          message: 'Aún no eres parte de BioStrucX, únete y sé parte del cambio'
+        });
+      }
+    } else {
+      return res.status(401).json({ success: false, message: 'Código inválido' });
+    }
   } catch (error) {
     console.error("❌ Error al verificar código:", error);
     res.status(500).json({ success: false, error: error.message });
