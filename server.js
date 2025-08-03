@@ -1,3 +1,6 @@
+const { connectDB } = require('./db');
+connectDB();
+
 // ⚙️ Cargar variables de entorno (solo aplica localmente)
 require('dotenv').config();
 

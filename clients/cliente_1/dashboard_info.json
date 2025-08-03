@@ -1,18 +1,9 @@
 {
-  "cliente_id": "cliente_1",
-  "nombre": "Jeimie Steve",
-  "elemento": "Viga simplemente apoyada",
-  "dimensiones_cm": {
-    "base": 25,
-    "altura": 30,
-    "largo": 50
+  "structure": "Beam_1",
+  "threshold": {
+    "displacement": 3,
+    "stress": 25
   },
-  "material": {
-    "tipo": "Concreto estructural",
-    "f'c_MPa": 30,
-    "E_MPa": 28000,
-    "densidad_kg_m3": 2400
-  },
-  "sensores": ["deformación", "esfuerzo", "desplazamiento"],
-  "simulacion_activa": true
+  "createdAt": "2025-08-03"
 }
+
