@@ -1,9 +1,0 @@
-{
-  "structure": "Beam_1",
-  "threshold": {
-    "displacement": 3,
-    "stress": 25
-  },
-  "createdAt": "2025-08-03"
-}
-
