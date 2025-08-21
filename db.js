@@ -1,16 +1,23 @@
+// db.js
 const { MongoClient } = require('mongodb');
-require('dotenv').config();
 
-const uri = process.env.MONGODB_URI;
-const client = new MongoClient(uri);
+const uri = process.env.mongodb_uri;
+const db_name = process.env.mongodb_db || 'biostrucx';
 
-async function connectDB() {
-  try {
+let client, db;
+
+async function connect() {
+  if (!client) {
+    client = new MongoClient(uri);
     await client.connect();
-    console.log('✅ Conectado a MongoDB Atlas');
-  } catch (err) {
-    console.error('❌ Error conectando a MongoDB:', err);
+    db = client.db(db_name);
   }
+  return db;
 }
 
-module.exports = { connectDB, client };
+async function col(name) {
+  const database = await connect();
+  return database.collection(name);
+}
+
+module.exports = { connect, col };
