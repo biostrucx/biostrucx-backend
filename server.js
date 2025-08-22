@@ -104,3 +104,4 @@ connect().then(() => {
   console.error('❌ Error conectando a MongoDB:', err?.message || err);
   process.exit(1);
 });
+
