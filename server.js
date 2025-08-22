@@ -10,98 +10,67 @@ const { connect } = require('./db');
 const sensor_routes = require('./routes/sensor_routes');
 
 const app = express();
-
-// ---------------- CORS ----------------
-const allowedOrigins = [
-  'http://localhost:5173',
-  'https://biostrucx.com',
-  'https://www.biostrucx.com',
-];
-app.use(cors({
-  origin: (origin, cb) => cb(null, !origin || allowedOrigins.includes(origin)),
-  credentials: true,
-}));
-app.options('*', cors()); // preflight
-
-// ---------------- Middlewares ----------
+app.use(cors());
 app.use(express.json());
 
-// ---------------- Twilio Verify --------
+// Twilio Verify
 const accountSid = process.env.twilio_account_sid;
 const authToken  = process.env.twilio_auth_token;
-const verifySid  = process.env.twilio_verify_sid; // debe empezar con VA...
+const verifySid  = process.env.twilio_verify_sid;
 const client = twilio(accountSid, authToken);
 
-// helper simple E.164
-const validPhone = (v = '') => /^\+\d{8,15}$/.test(String(v).trim());
+// Root
+app.get('/', (_, res) => res.send('✅ Backend activo (Twilio Verify + Sensors)'));
 
-// ---------------- Health ----------------
-app.get('/health', (_, res) => res.json({ status: 'ok', uptime: process.uptime() }));
-
-// ---------------- Auth: Send Code -------
+// Enviar código
 app.post('/send-code', async (req, res) => {
-  const { phoneNumber } = req.body || {};
+  const { phoneNumber } = req.body;
+  if (!phoneNumber) {
+    return res.status(400).json({ success: false, message: 'Falta phoneNumber' });
+  }
   try {
-    if (!phoneNumber) return res.status(400).json({ success: false, message: 'Falta phoneNumber' });
-    if (!validPhone(phoneNumber)) {
-      return res.status(400).json({ success: false, message: 'Usa formato internacional, ej: +447471256650' });
-    }
-    if (!accountSid || !authToken || !verifySid) {
-      return res.status(500).json({ success: false, message: 'Twilio no configurado en entorno' });
-    }
-
-    const v = await client.verify.v2.services(verifySid)
-      .verifications.create({ to: phoneNumber.trim(), channel: 'sms' });
-
-    return res.json({ success: true, sid: v.sid });
+    const v = await client.verify.v2.services(verifySid).verifications.create({
+      to: phoneNumber,
+      channel: 'sms'
+    });
+    res.json({ success: true, sid: v.sid });
   } catch (err) {
-    console.error('❌ send-code error:', err?.message || err);
-    return res.status(500).json({ success: false, message: err?.message || 'server_error' });
+    console.error('❌ send-code error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// ---------------- Auth: Verify Code -----
+// Verificar código
 app.post('/verify-code', async (req, res) => {
-  const { phoneNumber, code } = req.body || {};
+  const { phoneNumber, code } = req.body;
+  if (!phoneNumber || !code) {
+    return res.status(400).json({ success: false, message: 'Faltan datos' });
+  }
   try {
-    if (!phoneNumber || !code) {
-      return res.status(400).json({ status: 'denied', message: 'Faltan datos' });
-    }
-    if (!validPhone(phoneNumber)) {
-      return res.status(400).json({ status: 'denied', message: 'Formato de número inválido' });
-    }
-
-    const check = await client.verify.v2.services(verifySid)
-      .verificationChecks.create({ to: phoneNumber.trim(), code: String(code).trim() });
-
+    const check = await client.verify.v2.services(verifySid).verificationChecks.create({
+      to: phoneNumber,
+      code
+    });
     if (check.status === 'approved') {
-      // ⬇️ Política de acceso inicial: solo tu número entra a /dashboard/jeimie
-      const allowed_numbers = ['+447471256650'];
-      if (allowed_numbers.includes(phoneNumber.trim())) {
-        return res.json({ status: 'allowed', redirect: '/dashboard/jeimie' });
-      }
-      return res.json({
-        status: 'denied',
-        message: 'Aún no eres parte de BioStrucX, únete y sé parte del cambio',
-      });
+      res.json({ success: true, status: 'approved' });
+    } else {
+      res.status(401).json({ success: false, message: 'Código inválido' });
     }
-
-    return res.json({ status: 'invalid', message: 'Código incorrecto o expirado.' });
   } catch (err) {
-    console.error('❌ verify-code error:', err?.message || err);
-    return res.status(500).json({ status: 'error', message: err?.message || 'server_error' });
+    console.error('❌ verify-code error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// ---------------- Sensores --------------
+// Rutas sensores
 app.use('/api/sensors', sensor_routes);
 
-// ---------------- Start -----------------
-const PORT = process.env.port || process.env.PORT || 5000;
+// Arranque
+const PORT = process.env.PORT || 5000;
 connect().then(() => {
   app.listen(PORT, () => console.log(`🚀 API lista en :${PORT}`));
 }).catch(err => {
-  console.error('❌ Error conectando a MongoDB:', err?.message || err);
+  console.error('❌ Error conectando a MongoDB:', err.message);
   process.exit(1);
 });
 
