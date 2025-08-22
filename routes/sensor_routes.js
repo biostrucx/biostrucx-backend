@@ -10,6 +10,38 @@ router.post('/:clientid', async (req, res) => {
 
     let { ts, ts_ms, voltage_dc, adc_raw, disp_mm } = req.body || {};
 
+    // --- helpers ---
+function parse_window(s = '5m') {
+  const m = String(s).match(/^(\d+)([smhd])$/i);
+  const n = m ? parseInt(m[1], 10) : 5;
+  const u = m ? m[2].toLowerCase() : 'm';
+  const ms = { s: 1e3, m: 6e4, h: 36e5, d: 864e5 }[u];
+  return new Date(Date.now() - n * ms);
+}
+
+// GET /api/sensors/latest/:clientid
+router.get('/latest/:clientid', async (req, res) => {
+  try {
+    const clientid = String(req.params.clientid).toLowerCase();
+    const c = await col('sensor_data');
+    const doc = await c.find({ clientid }).sort({ ts: -1 }).limit(1).toArray();
+    res.json(doc[0] || null);
+  } catch (e) { console.error(e); res.status(500).json({ ok:false, error:'server_error' }); }
+});
+
+// GET /api/sensors/stream/:clientid?window=5m&limit=300
+router.get('/stream/:clientid', async (req, res) => {
+  try {
+    const clientid = String(req.params.clientid).toLowerCase();
+    const from = parse_window(req.query.window || '5m');
+    const limit = Math.min(parseInt(req.query.limit || '300', 10), 2000);
+    const c = await col('sensor_data');
+    const items = await c.find({ clientid, ts: { $gte: from } })
+                         .sort({ ts: 1 }).limit(limit).toArray();
+    res.json(items);
+  } catch (e) { console.error(e); res.status(500).json({ ok:false, error:'server_error' }); }
+});
+
     // normaliza ts -> Date
     let ts_date = null;
     if (typeof ts_ms === 'number') ts_date = new Date(ts_ms);
