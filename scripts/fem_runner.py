@@ -17,7 +17,7 @@ job_id   = p.get("job_id")
 params   = p.get("params") or {}
 
 # Mongo
-uri = os.getenv("MONGODB_URI") or os.getenv("MONGO_URI") or "mongodb://127.0.0.1:27017"
+uri = (os.getenv("MONGODB_URI") or os.getenv("MONGO_URI") or os.getenv("mongodb_uri") or "mongodb://127.0.0.1:27017")
 db = MongoClient(uri)["biostrucx"]
 col = db["simulation_result"]
 
