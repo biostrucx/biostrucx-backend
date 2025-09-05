@@ -3,6 +3,7 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const { col } = require('../db');
+const { spawn } = require('child_process'); // <- añadido
 
 // POST /api/simulations/:clientid/run  -> crea job y lo deja "queued"
 router.post('/:clientid/run', async (req, res) => {
@@ -23,6 +24,15 @@ router.post('/:clientid/run', async (req, res) => {
 
     const c = await col('simulation_result');
     await c.insertOne(doc);
+
+    // ---- lanzar runner Python (no bloquea) ----
+    const py = spawn('python3', ['scripts/fem_runner.py'], {
+      stdio: ['pipe', 'inherit', 'inherit'],
+      env: { ...process.env }
+    });
+    py.stdin.write(JSON.stringify({ clientid, job_id, params: req.body }) + '\n');
+    py.stdin.end();
+    // ------------------------------------------
 
     return res.status(202).json({ ok: true, job_id });
   } catch (e) {
