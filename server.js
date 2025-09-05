@@ -5,6 +5,7 @@ const cors = require('cors');
 
 const { connect } = require('./db');
 const sensor_routes = require('./routes/sensor_routes');
+const simulation_routes = require('./routes/simulation_routes'); // <— añadido
 
 const app = express();
 
@@ -19,6 +20,9 @@ app.get('/health', (_, res) => res.json({ status: 'ok', uptime: process.uptime()
 // Sensores
 app.use('/api/sensors', sensor_routes);
 
+// Simulaciones FEM
+app.use('/api/simulations', simulation_routes); // <— añadido
+
 // Start
 const PORT = process.env.PORT || 5000;
 connect().then(() => {
@@ -27,5 +31,3 @@ connect().then(() => {
   console.error('Mongo connect error:', err?.message || err);
   process.exit(1);
 });
-
-
