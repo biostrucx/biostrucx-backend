@@ -1,8 +1,8 @@
 // db.js
 const { MongoClient } = require('mongodb');
 
-const uri = process.env.MONGODB_URI;
-const dbName = process.env.MONGODB_DB || 'biostrucx';
+const uri = process.env.mongodb_uri;
+const dbName = process.env.mongodb_db || 'biostrucx';
 
 let client;
 let db;
