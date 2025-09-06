@@ -2,6 +2,14 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+app.use((req, res, next) => {
+  res.set('Vary', 'Origin');
+  if (req.path.startsWith('/api/simulations')) {
+    res.set('Cache-Control', 'no-store');
+  }
+  next();
+});
+
 
 const { connect, getDb } = require('./db');
 const sensor_routes = require('./routes/sensor_routes');
@@ -35,6 +43,7 @@ connect().then(() => {
   console.error('Mongo connect error:', err?.message || err);
   process.exit(1);
 });
+
 
 
 
