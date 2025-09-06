@@ -5,7 +5,10 @@ const cors = require('cors');
 
 const { connect } = require('./db');
 const sensor_routes = require('./routes/sensor_routes');
-const simulation_routes = require('./routes/simulation_routes'); // <— añadido
+const simulation_routes = require('./routes/simulation_routes');
+
+// ⬇️ Job FEM auto (nuevo)
+const femJob = require('./jobs/fem_auto');
 
 const app = express();
 
@@ -21,11 +24,14 @@ app.get('/health', (_, res) => res.json({ status: 'ok', uptime: process.uptime()
 app.use('/api/sensors', sensor_routes);
 
 // Simulaciones FEM
-app.use('/api/simulations', simulation_routes); // <— añadido
+app.use('/api/simulations', simulation_routes);
 
 // Start
 const PORT = process.env.PORT || 5000;
 connect().then(() => {
+  // ⬇️ Inicia el bucle FEM una vez que Mongo está listo
+  femJob.start();
+
   app.listen(PORT, () => console.log(`API running on :${PORT}`));
 }).catch(err => {
   console.error('Mongo connect error:', err?.message || err);
