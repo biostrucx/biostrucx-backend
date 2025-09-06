@@ -9,11 +9,10 @@ const simulation_routes = require('./routes/simulation_routes');
 
 const app = express();
 
-// CORS (permite prod + www + local dev)
+// CORS
 const allowed = (process.env.CORS_ORIGIN
   ? process.env.CORS_ORIGIN.split(',').map(s => s.trim())
   : ['http://localhost:5173','https://biostrucx.com','https://www.biostrucx.com']);
-
 app.use(cors({
   origin: (origin, cb) => cb(null, !origin || allowed.includes(origin)),
   credentials: true
@@ -27,13 +26,12 @@ app.get('/health', (_, res) => res.json({ status: 'ok', uptime: process.uptime()
 app.use('/api/sensors', sensor_routes);
 app.use('/api/simulations', simulation_routes);
 
-// Arranque
+// Start
 const PORT = process.env.PORT || 5000;
 connect()
-  .then(() => {
-    app.listen(PORT, () => console.log(`API running on :${PORT}`));
-  })
+  .then(() => app.listen(PORT, () => console.log(`API running on :${PORT}`)))
   .catch(err => {
     console.error('Mongo connect error:', err?.message || err);
     process.exit(1);
   });
+
