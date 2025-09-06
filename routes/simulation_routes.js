@@ -1,123 +1,93 @@
-// routes/simulation_routes.js
 const express = require('express');
 const router = express.Router();
-
-function parseWindowToMs(s = '5m') {
-  const m = String(s).trim().match(/^(\d+)\s*([smhd])?$/i);
-  if (!m) return 5 * 60 * 1000; // 5m por defecto
-  const n = parseInt(m[1], 10) || 5;
-  const u = (m[2] || 'm').toLowerCase();
-  const mult = u === 's' ? 1e3 : u === 'm' ? 6e4 : u === 'h' ? 36e5 : 864e5;
-  return n * mult;
-}
-
-function getDbFromAnywhere(req) {
-  // Prioridad: lo que puso server.js
-  if (req.app?.locals?.db) return req.app.locals.db;
-  // Alternativas comunes según tu proyecto
-  try {
-    const dbMod = require('../db');
-    if (typeof dbMod.getDb === 'function') return dbMod.getDb();
-    if (typeof dbMod.db === 'function') return dbMod.db();
-    if (dbMod.db) return dbMod.db;
-  } catch (_) {}
-  throw new Error('DB connection not available');
-}
+const { getDb } = require('../db');
 
 /**
  * GET /api/simulations/:clientid/latest
- * Devuelve el último resultado de FEM (o null). Nunca 500.
+ * Devuelve el último resultado FEM (simulation_result) para el cliente.
  */
 router.get('/:clientid/latest', async (req, res) => {
+  res.set('Cache-Control', 'no-store'); // evita 304 del navegador/CDN
   const clientid = String(req.params.clientid || '').trim();
-  if (!clientid) return res.json(null);
 
   try {
-    const db = getDbFromAnywhere(req);
-    const doc = await db.collection('simulation_result')
-      .find({ clientid })
-      .sort({ ts: -1 })
-      .limit(1)
-      .toArray();
+    const db = getDb();
+    const col = db.collection('simulation_result');
 
-    if (!doc.length) return res.json(null);
+    // Trae el más reciente por ts (si no existe ts, cae al _id)
+    let doc = await col.find({ clientid }).sort({ ts: -1, _id: -1 }).limit(1).next();
 
-    const r = doc[0];
-    // saneo mínimo para el viewer (si no hay viz, frontend mostrará "sin modelo")
+    // Si no hay doc, devuelve null explícito
+    if (!doc) return res.json(null);
+
+    // Pequeña sanitización: si viz viene roto, lo anulamos para que el front lo avise
+    const v = doc.viz || {};
+    const okVerts = Array.isArray(v.vertices) && v.vertices.length % 3 === 0;
+    const okInd   = Array.isArray(v.indices)  && v.indices.length  % 3 === 0;
+    if (!(okVerts && okInd)) {
+      doc.viz = null;
+      doc.status = 'invalid-viz';
+    }
+
     return res.json({
-      _id: r._id,
-      clientid: r.clientid,
-      status: r.status || 'done',
-      ts: r.ts,
-      params: r.params || null,
-      viz: r.viz || null,              // { vertices, indices, u_mag, marker? }
+      _id: doc._id,
+      clientid: doc.clientid,
+      status: doc.status || 'done',
+      model: doc.model || {},
+      params: doc.params || {},
+      ts: doc.ts || null,
+      viz: doc.viz || null
     });
-  } catch (e) {
-    console.error('GET /simulations/:clientid/latest error:', e);
-    // NO devolvemos 500; así no rompe el dashboard
-    return res.json(null);
+  } catch (err) {
+    console.error('GET /simulations/:clientid/latest error:', err);
+    return res.status(500).json({ error: 'server' });
   }
 });
 
 /**
  * GET /api/simulations/:clientid/series?window=5m&limit=300
- * Devuelve { fem: [{ts, fem_mm}], real: [{ts, disp_mm}] }. Nunca 500.
+ * Devuelve series de tiempo desde simulation_ts (fem_mm y real opcional).
  */
 router.get('/:clientid/series', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   const clientid = String(req.params.clientid || '').trim();
+  const limit = Math.min(parseInt(req.query.limit || '300', 10), 1000);
+  // ventana simple; si no llega nada usamos 5 min
   const windowStr = String(req.query.window || '5m');
-  const limitStr  = String(req.query.limit  || '300');
-
-  const limit = Math.max(1, Math.min(parseInt(limitStr, 10) || 300, 2000));
-  const since = new Date(Date.now() - parseWindowToMs(windowStr));
+  const now = Date.now();
+  let dt = 5 * 60 * 1000;
+  try {
+    if (windowStr.endsWith('m')) dt = parseInt(windowStr) * 60 * 1000;
+    if (windowStr.endsWith('s')) dt = parseInt(windowStr) * 1000;
+    if (windowStr.endsWith('h')) dt = parseInt(windowStr) * 60 * 60 * 1000;
+  } catch {}
+  const start = new Date(now - dt);
 
   try {
-    const db = getDbFromAnywhere(req);
+    const db = getDb();
+    const col = db.collection('simulation_ts');
 
-    // FEM series
-    let fem = [];
-    try {
-      const rows = await db.collection('simulation_ts')
-        .find({ clientid, ts: { $gte: since } })
-        .sort({ ts: 1 })
-        .limit(limit)
-        .project({ _id: 0, ts: 1, fem_mm: 1 })
-        .toArray();
+    const cur = col.find(
+      { clientid, ts: { $gte: start } },
+      { projection: { _id: 0, ts: 1, fem_mm: 1, disp_mm: 1 } }
+    ).sort({ ts: 1 }).limit(limit);
 
-      fem = rows.map(d => ({
-        ts: d.ts instanceof Date ? d.ts.getTime() : new Date(d.ts).getTime(),
-        fem_mm: Number(d.fem_mm),
-      })).filter(d => Number.isFinite(d.fem_mm));
-    } catch (e) {
-      console.error('series fem query error:', e);
-      fem = [];
-    }
+    const rows = await cur.toArray();
 
-    // Real (sensor) – opcional, no rompas si no hay
-    let real = [];
-    try {
-      const rows = await db.collection('sensor_data')
-        .find({ clientid, ts: { $gte: since } })
-        .sort({ ts: 1 })
-        .limit(limit)
-        .project({ _id: 0, ts: 1, disp_mm: 1 })
-        .toArray();
+    const fem = rows
+      .filter(r => typeof r.fem_mm === 'number')
+      .map(r => ({ ts: new Date(r.ts).getTime(), v: Number(r.fem_mm) }));
 
-      real = rows.map(d => ({
-        ts: d.ts instanceof Date ? d.ts.getTime() : new Date(d.ts).getTime(),
-        disp_mm: Number(d.disp_mm),
-      })).filter(d => Number.isFinite(d.disp_mm));
-    } catch (e) {
-      console.error('series real query error (sensor_data):', e);
-      real = [];
-    }
+    const real = rows
+      .filter(r => typeof r.disp_mm === 'number')
+      .map(r => ({ ts: new Date(r.ts).getTime(), disp_mm: Number(r.disp_mm) }));
 
     return res.json({ fem, real });
-  } catch (e) {
-    console.error('GET /simulations/:clientid/series fatal error:', e);
-    // NO 500
-    return res.json({ fem: [], real: [] });
+  } catch (err) {
+    console.error('GET /simulations/:clientid/series error:', err);
+    return res.status(500).json({ error: 'server' });
   }
 });
 
 module.exports = router;
+
