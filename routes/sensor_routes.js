@@ -1,66 +1,77 @@
 // routes/sensor_routes.js
 const express = require('express');
 const router = express.Router();
+const { col } = require('../db');
 
-// Convierte window=5m / 10m / 1h o windowSec=300 en segundos
-function parseWindow(query) {
-  // Opción 1: windowSec numérico (recomendado)
-  if (query.windowSec !== undefined) {
-    const n = Number(query.windowSec);
-    if (Number.isFinite(n) && n > 0) return n;
-  }
-  // Opción 2: window con sufijo (5m, 10m, 1h, 2d…)
-  const w = (query.window ?? '5m').toString().trim();
-  const m = w.match(/^(\d+)\s*(s|m|h|d)$/i);
-  if (!m) return 300;
-  const val = Number(m[1]);
-  const unit = m[2].toLowerCase();
-  const mult = { s: 1, m: 60, h: 3600, d: 86400 }[unit] ?? 60;
-  return val * mult;
+// helper
+function parse_window(s = '5m') {
+  const m = String(s).match(/^(\d+)([smhd])$/i);
+  const n = m ? parseInt(m[1], 10) : 5;
+  const u = m ? m[2].toLowerCase() : 'm';
+  const ms = { s: 1e3, m: 6e4, h: 36e5, d: 864e5 }[u];
+  return new Date(Date.now() - n * ms);
 }
 
-router.get('/latest/:clientid', async (req, res) => {
+// POST /api/sensors/:clientid
+router.post('/:clientid', async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    const { clientid } = req.params;
+    const clientid = String(req.params.clientid).toLowerCase();
+    let { ts, ts_ms, voltage_dc, adc_raw, disp_mm } = req.body || {};
 
-    const doc = await db
-      .collection('sensor_data')
-      .find({ clientid })
-      .project({ _id: 0 })
-      .sort({ ts: -1 })
-      .limit(1)
-      .next();
+    // normaliza ts -> Date
+    let ts_date = null;
+    if (typeof ts_ms === 'number') ts_date = new Date(ts_ms);
+    else if (typeof ts === 'number') ts_date = new Date(ts);
+    else if (typeof ts === 'string') ts_date = new Date(ts);
+    else ts_date = new Date();
 
-    if (!doc) return res.status(404).json(null);
-    return res.json(doc);
+    const doc = {
+      ts: ts_date,
+      clientid,
+      voltage_dc: Number(voltage_dc),
+      adc_raw: Number(adc_raw),
+      disp_mm: Number(disp_mm),
+    };
+
+    if (Number.isNaN(doc.voltage_dc) || Number.isNaN(doc.adc_raw) || Number.isNaN(doc.disp_mm)) {
+      return res.status(400).json({ ok: false, error: 'invalid_numeric_fields' });
+    }
+
+    const c = await col('sensor_data');
+    await c.insertOne(doc);
+    res.json({ ok: true });
   } catch (err) {
-    console.error('GET /api/sensors/latest error:', err);
-    return res.status(500).json({ error: 'server' });
+    console.error(err);
+    res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
 
+// GET /api/sensors/latest/:clientid
+router.get('/latest/:clientid', async (req, res) => {
+  try {
+    const clientid = String(req.params.clientid).toLowerCase();
+    const c = await col('sensor_data');
+    const doc = await c.find({ clientid }).sort({ ts: -1 }).limit(1).toArray();
+    res.json(doc[0] || null);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// GET /api/sensors/stream/:clientid?window=5m&limit=300
 router.get('/stream/:clientid', async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    const { clientid } = req.params;
-
-    const windowSec = parseWindow(req.query);
-    const limit = Math.max(1, Math.min(1000, Number(req.query.limit) || 300));
-    const since = new Date(Date.now() - windowSec * 1000);
-
-    const rows = await db
-      .collection('sensor_data')
-      .find({ clientid, ts: { $gte: since } })
-      .project({ _id: 0 })
-      .sort({ ts: 1 })
-      .limit(limit)
-      .toArray();
-
-    return res.json(Array.isArray(rows) ? rows : []);
-  } catch (err) {
-    console.error('GET /api/sensors/stream error:', err);
-    return res.status(500).json({ error: 'server' });
+    const clientid = String(req.params.clientid).toLowerCase();
+    const from = parse_window(req.query.window || '5m');
+    const limit = Math.min(parseInt(req.query.limit || '300', 10), 2000);
+    const c = await col('sensor_data');
+    const items = await c.find({ clientid, ts: { $gte: from } })
+      .sort({ ts: 1 }).limit(limit).toArray();
+    res.json(items);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
 
