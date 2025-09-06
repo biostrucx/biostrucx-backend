@@ -3,45 +3,64 @@ const express = require('express');
 const router = express.Router();
 const { col } = require('../db');
 
-// helper
-function parse_window(s = '5m') {
-  const m = String(s).match(/^(\d+)([smhd])$/i);
+// ---- índices (una vez) ----
+async function ensureIndexes() {
+  try {
+    const c = await col('sensor_data');
+    await c.createIndex({ clientid: 1, ts: -1 }, { name: 'idx_clientid_ts' });
+  } catch (e) {
+    console.warn('sensor_data index warn:', e?.message || e);
+  }
+}
+ensureIndexes();
+
+// ---- utilidades ----
+function asDate(x) {
+  if (x instanceof Date) return x;
+  if (typeof x === 'number' && Number.isFinite(x)) return new Date(x);
+  if (typeof x === 'string' && x) {
+    const d = new Date(x);
+    if (!Number.isNaN(+d)) return d;
+  }
+  return new Date();
+}
+
+function windowFromQuery(q) {
+  // acepta ?window=5m ó ?windowSec=300
+  if (q.windowSec != null) {
+    const sec = Number(q.windowSec);
+    const s = Number.isFinite(sec) ? sec : 300;
+    return new Date(Date.now() - s * 1000);
+  }
+  const txt = String(q.window ?? '5m');
+  const m = txt.match(/^(\d+)([smhd])$/i);
   const n = m ? parseInt(m[1], 10) : 5;
   const u = m ? m[2].toLowerCase() : 'm';
-  const ms = { s: 1e3, m: 6e4, h: 36e5, d: 864e5 }[u];
-  return new Date(Date.now() - n * ms);
+  const mult = { s: 1e3, m: 6e4, h: 36e5, d: 864e5 }[u];
+  return new Date(Date.now() - n * mult);
 }
+
+// ================== RUTAS ==================
 
 // POST /api/sensors/:clientid
 router.post('/:clientid', async (req, res) => {
   try {
-    const clientid = String(req.params.clientid).toLowerCase();
-    let { ts, ts_ms, voltage_dc, adc_raw, disp_mm } = req.body || {};
-
-    // normaliza ts -> Date
-    let ts_date = null;
-    if (typeof ts_ms === 'number') ts_date = new Date(ts_ms);
-    else if (typeof ts === 'number') ts_date = new Date(ts);
-    else if (typeof ts === 'string') ts_date = new Date(ts);
-    else ts_date = new Date();
+    const clientid = String(req.params.clientid || '').trim().toLowerCase();
+    const { ts, ts_ms, voltage_dc, adc_raw, disp_mm } = req.body || {};
 
     const doc = {
-      ts: ts_date,
       clientid,
-      voltage_dc: Number(voltage_dc),
-      adc_raw: Number(adc_raw),
-      disp_mm: Number(disp_mm),
+      ts: asDate(ts_ms ?? ts),
+      voltage_dc: Number.isFinite(Number(voltage_dc)) ? Number(voltage_dc) : null,
+      adc_raw: Number.isFinite(Number(adc_raw)) ? Number(adc_raw) : null,
+      disp_mm: Number.isFinite(Number(disp_mm)) ? Number(disp_mm) : null,
     };
-
-    if (Number.isNaN(doc.voltage_dc) || Number.isNaN(doc.adc_raw) || Number.isNaN(doc.disp_mm)) {
-      return res.status(400).json({ ok: false, error: 'invalid_numeric_fields' });
-    }
 
     const c = await col('sensor_data');
     await c.insertOne(doc);
     res.json({ ok: true });
-  } catch (err) {
-    console.error(err);
+  } catch (e) {
+    console.error('POST /sensors error:', e);
     res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
@@ -49,32 +68,35 @@ router.post('/:clientid', async (req, res) => {
 // GET /api/sensors/latest/:clientid
 router.get('/latest/:clientid', async (req, res) => {
   try {
-    const clientid = String(req.params.clientid).toLowerCase();
+    const clientid = String(req.params.clientid || '').trim().toLowerCase();
     const c = await col('sensor_data');
     const doc = await c.find({ clientid }).sort({ ts: -1 }).limit(1).toArray();
-    res.json(doc[0] || null);
+    res.json(doc[0] ?? null); // nunca 500 por estar vacío
   } catch (e) {
-    console.error(e);
+    console.error('GET /sensors/latest error:', e);
     res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
 
-// GET /api/sensors/stream/:clientid?window=5m&limit=300
+// GET /api/sensors/stream/:clientid?window=5m&limit=300  (o windowSec=300)
 router.get('/stream/:clientid', async (req, res) => {
   try {
-    const clientid = String(req.params.clientid).toLowerCase();
-    const from = parse_window(req.query.window || '5m');
-    const limit = Math.min(parseInt(req.query.limit || '300', 10), 2000);
+    const clientid = String(req.params.clientid || '').trim().toLowerCase();
+    const from = windowFromQuery(req.query);
+    const limit = Math.min(Number(req.query.limit ?? 300) || 300, 5000);
+
     const c = await col('sensor_data');
     const items = await c.find({ clientid, ts: { $gte: from } })
       .sort({ ts: 1 }).limit(limit).toArray();
-    res.json(items);
+
+    res.json(items ?? []); // nunca 500 por estar vacío
   } catch (e) {
-    console.error(e);
+    console.error('GET /sensors/stream error:', e);
     res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
 
 module.exports = router;
+
 
 
