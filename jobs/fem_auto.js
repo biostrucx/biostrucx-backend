@@ -1,53 +1,71 @@
-// jobs/fem_auto.js
-const { col } = require('../db');
+const cron = require('node-cron');
+const { execFile } = require('child_process');
+const path = require('path');
+const { db } = require('../db');
 
-// δ = P L^3 / (48 E I)  (Euler-Bernoulli midspan, carga puntual centrada)
-function computeMidspanDeflection({ L=25, E_GPa=25, b=1, h=1, P_kN=10 }) {
-  const E = E_GPa * 1e9;                // Pa
-  const I = (b * (h ** 3)) / 12;         // m^4
-  const P = P_kN * 1000;                 // N
-  const delta_m = (P * L**3) / (48 * E * I);
-  return delta_m * 1000;                 // mm
-}
+const CLIENTS = (process.env.FEM_CLIENTS || 'jeimie').split(',').map(s => s.trim());
+const CRON = process.env.FEM_CRON || '*/2 * * * *'; // cada 2 min por defecto
 
-async function tick(clientid = 'jeimie') {
-  const now = new Date();
+async function saveResult(clientid, payload) {
+  const simResult = db.collection('simulation_result');
+  const simTs     = db.collection('simulation_ts');
 
-  // carga oscilante para ver curva
-  const base = 10; // kN
-  const osc  = 2 * Math.sin(now.getTime() / 30000);
-  const fem_mm = computeMidspanDeflection({ L: 25, E_GPa: 25, b: 1, h: 1, P_kN: base + osc });
-
-  // 1) guarda muestra en time-series: simulation_ts
-  const cTs = await col('simulation_ts');
-  await cTs.insertOne({ clientid, ts: now, fem_mm });
-
-  // 2) guarda/actualiza último viz para la tarjeta 3D
-  const cRes = await col('simulation_result');
-  const viz = {
-    vertices: [0,0,0, 25,0,0, 25,0,1, 0,0,1],
-    indices: [0,1,2, 0,2,3],
-    u_mag: [0, fem_mm/1000, fem_mm/1000, 0], // exageración
+  const doc = {
+    clientid,
+    ts: new Date(payload.ts),
+    status: payload.status || 'done',
+    model: payload.model,
+    params: payload.params,
+    viz: payload.viz
   };
-  await cRes.updateOne(
+
+  await simResult.updateOne(
     { clientid },
-    {
-      $set: {
-        clientid,
-        ts: now,
-        status: 'done',
-        params: { desc: 'viga 25x25x1 m (analítico continuo)' },
-        model: { type: 'beam', dims: { L: 25, B: 1, H: 1 } },
-        viz
-      }
-    },
+    { $set: doc },
     { upsert: true }
   );
+
+  await simTs.insertOne({
+    clientid,
+    ts: new Date(payload.ts),
+    fem_mm: Number(payload.midspan_mm)
+  });
+}
+
+function runOnceFor(clientid) {
+  return new Promise((resolve, reject) => {
+    const script = path.join(process.cwd(), 'scripts', 'fem_beam.py');
+    const py = process.env.PYTHON || 'python3';
+
+    execFile(py, [script], { timeout: 120000 }, async (err, stdout, stderr) => {
+      if (err) {
+        console.error('[fem_auto]', clientid, 'error:', err.message, stderr);
+        return reject(err);
+      }
+      try {
+        const payload = JSON.parse(stdout.toString());
+        await saveResult(clientid, payload);
+        resolve();
+      } catch (e) {
+        console.error('[fem_auto] parse/save error:', e.message);
+        reject(e);
+      }
+    });
+  });
 }
 
 function start() {
-  tick().catch(console.error);
-  setInterval(() => tick().catch(console.error), 5000); // cada 5s
+  console.log('[fem_auto] scheduling:', CRON, 'clients:', CLIENTS);
+  cron.schedule(CRON, async () => {
+    for (const c of CLIENTS) {
+      try {
+        await runOnceFor(c);
+      } catch {
+        /* ya se logueó */
+      }
+    }
+  }, { timezone: 'UTC' });
 }
 
 module.exports = { start };
+
