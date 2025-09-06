@@ -7,7 +7,7 @@ const { connect, getDb } = require('./db');
 const sensor_routes = require('./routes/sensor_routes');
 const simulation_routes = require('./routes/simulation_routes');
 
-const app = express(); // <-- crea la app ANTES de usar app.use
+const app = express();
 
 // CORS (producción)
 const allowed = [
@@ -15,20 +15,13 @@ const allowed = [
   'https://biostrucx.com',
   'https://www.biostrucx.com',
 ];
-app.use(
-  cors({
-    origin(origin, cb) {
-      // Permite sin origin (curl/health) o si está en la lista
-      if (!origin || allowed.includes(origin)) return cb(null, true);
-      return cb(new Error('Not allowed by CORS'));
-    },
-    credentials: true,
-  })
-);
-
+app.use(cors({
+  origin: (o, cb) => cb(null, !o || allowed.includes(o)),
+  credentials: true
+}));
 app.use(express.json());
 
-// Anti-cache para endpoints de simulación (y Vary para CORS/CDN)
+// Evita cache para /api/simulations y añade Vary: Origin
 app.use((req, res, next) => {
   res.set('Vary', 'Origin');
   if (req.path.startsWith('/api/simulations')) {
@@ -37,33 +30,25 @@ app.use((req, res, next) => {
   next();
 });
 
-// Salud
+// Health
 app.get('/health', (_, res) => res.json({ status: 'ok', uptime: process.uptime() }));
 
 // Rutas
 app.use('/api/sensors', sensor_routes);
 app.use('/api/simulations', simulation_routes);
 
-// 404 genérico
-app.use((req, res) => res.status(404).json({ error: 'not_found' }));
-
-// Manejo de errores
-app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
-  res.status(500).json({ error: 'server' });
-});
+// 404 “suave” para raíz del servicio
+app.get('/', (_, res) => res.status(404).json({ error: 'not_found' }));
 
 // Start
 const PORT = process.env.PORT || 5000;
-connect()
-  .then(() => {
-    app.locals.db = getDb && getDb();
-    app.listen(PORT, () => console.log(`API running on :${PORT}`));
-  })
-  .catch((err) => {
-    console.error('Mongo connect error:', err?.message || err);
-    process.exit(1);
-  });
+connect().then(() => {
+  app.locals.db = getDb && getDb();
+  app.listen(PORT, () => console.log(`API running on :${PORT}`));
+}).catch(err => {
+  console.error('Mongo connect error:', err?.message || err);
+  process.exit(1);
+});
 
 
 
