@@ -9,7 +9,7 @@ const simulation_routes = require('./routes/simulation_routes');
 
 const app = express();
 
-// CORS (producción)
+// CORS (ajusta lista si hace falta)
 const allowed = [
   'http://localhost:5173',
   'https://biostrucx.com',
@@ -21,7 +21,7 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Evita cache para /api/simulations y añade Vary: Origin
+// Cabeceras útiles
 app.use((req, res, next) => {
   res.set('Vary', 'Origin');
   if (req.path.startsWith('/api/simulations')) {
@@ -37,10 +37,6 @@ app.get('/health', (_, res) => res.json({ status: 'ok', uptime: process.uptime()
 app.use('/api/sensors', sensor_routes);
 app.use('/api/simulations', simulation_routes);
 
-// 404 “suave” para raíz del servicio
-app.get('/', (_, res) => res.status(404).json({ error: 'not_found' }));
-
-// Start
 const PORT = process.env.PORT || 5000;
 connect().then(() => {
   app.locals.db = getDb && getDb();
