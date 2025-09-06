@@ -3,7 +3,7 @@ const express = require('express');
 const router = express.Router();
 const { col } = require('../db');
 
-// helper
+// helper ventana
 function parse_window(s = '5m') {
   const m = String(s).match(/^(\d+)([smhd])$/i);
   const n = m ? parseInt(m[1], 10) : 5;
@@ -37,9 +37,34 @@ router.post('/:clientid', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'invalid_numeric_fields' });
     }
 
+    // 1) guarda medición real
     const c = await col('sensor_data');
     await c.insertOne(doc);
-    res.json({ ok: true });
+
+    // 2) AUTOMÁTICO: inserta muestra FEM (constante) para comparar
+    //    lee el u_sensor_mm precomputado del modelo teórico del cliente
+    try {
+      const simC = await col('simulation_result');
+      const sim = await simC.find({ clientid, status: 'done' })
+        .project({ _id: 0, u_sensor_mm: 1 })
+        .sort({ ts: -1 })
+        .limit(1).toArray();
+
+      const u = sim[0]?.u_sensor_mm;
+      if (Number.isFinite(u)) {
+        const tsC = await col('simulation_ts');
+        await tsC.insertOne({
+          clientid,
+          ts: ts_date,           // alineado con la lectura real
+          u_pred_mm: Number(u),  // FEM constante
+        });
+      }
+    } catch (e) {
+      console.error('simulation_ts insert error:', e);
+      // no rompe la ruta si falla
+    }
+
+    return res.json({ ok: true });
   } catch (err) {
     console.error(err);
     res.status(500).json({ ok: false, error: 'server_error' });
@@ -76,4 +101,5 @@ router.get('/stream/:clientid', async (req, res) => {
 });
 
 module.exports = router;
+
 
