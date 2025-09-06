@@ -1,74 +1,63 @@
 // routes/simulation_routes.js
 const express = require('express');
 const router = express.Router();
-const { getDb } = require('../db');
 
-/** Util: parsea '5m', '2h', '1d' a milisegundos */
-function parseWindowToMs(w = '5m') {
-  const m = String(w).match(/^(\d+)\s*([smhd])$/i);
-  if (!m) return 5 * 60 * 1000; // 5m por defecto
-  const n = Number(m[1]);
-  const unit = m[2].toLowerCase();
-  const mult = unit === 's' ? 1000 : unit === 'm' ? 60000 : unit === 'h' ? 3600000 : 86400000;
+// "5m", "30s", "1h", etc. -> segundos
+function parseWindow(w = '5m') {
+  const m = String(w).trim().match(/^(\d+)\s*([smhd])$/i);
+  if (!m) return 300;
+  const n = +m[1];
+  const u = m[2].toLowerCase();
+  const mult = u === 's' ? 1 : u === 'm' ? 60 : u === 'h' ? 3600 : 86400;
   return n * mult;
 }
 
-/** Devuelve el último resultado FEM para el cliente */
-async function getLatest(req, res) {
+// GET /api/simulations/:clientid/latest
+router.get('/:clientid/latest', async (req, res) => {
   try {
-    const clientid = req.params.clientid;
-    const db = getDb();
+    const db = req.app.locals.db;
+    if (!db) return res.status(500).json({ error: 'no_db' });
+
+    const { clientid } = req.params;
+
     const doc = await db.collection('simulation_result')
       .find({ clientid })
       .sort({ ts: -1 })
       .limit(1)
-      .next();
+      .toArray();
 
-    // Front espera objeto o null (no 404)
-    return res.json(doc || null);
-  } catch (err) {
-    console.error('GET latest error:', err);
+    // si no hay documento, responde null (el front muestra "sin modelo")
+    return res.json(doc[0] || null);
+  } catch (e) {
+    console.error('sim/latest error:', e);
     return res.status(500).json({ error: 'server' });
   }
-}
+});
 
-/** Devuelve serie temporal desde simulation_ts */
-async function getSeries(req, res) {
+// GET /api/simulations/:clientid/series?window=5m&limit=300
+router.get('/:clientid/series', async (req, res) => {
   try {
-    const clientid = req.params.clientid;
-    const windowMs = parseWindowToMs(req.query.window || '5m');
-    const limit = Math.min(Number(req.query.limit) || 300, 2000);
-    const since = new Date(Date.now() - windowMs);
+    const db = req.app.locals.db;
+    if (!db) return res.status(500).json({ error: 'no_db' });
 
-    const db = getDb();
-    const cursor = db.collection('simulation_ts')
+    const { clientid } = req.params;
+    const limit = Math.min(parseInt(req.query.limit || '300', 10) || 300, 2000);
+    const windowSec = parseWindow(req.query.window || '5m');
+    const since = new Date(Date.now() - windowSec * 1000);
+
+    const fem = await db.collection('simulation_ts')
       .find({ clientid, ts: { $gte: since } })
-      .sort({ ts: -1 })
-      .limit(limit);
+      .project({ _id: 0, ts: 1, fem_mm: 1 })
+      .sort({ ts: 1 })
+      .limit(limit)
+      .toArray();
 
-    const rows = await cursor.toArray();
-    // devolvemos en orden ascendente (tiempo)
-    rows.reverse();
-
-    return res.json({
-      fem: rows.map(r => ({ ts: r.ts, fem_mm: r.fem_mm }))
-    });
-  } catch (err) {
-    console.error('GET series error:', err);
+    return res.json({ fem });
+  } catch (e) {
+    console.error('sim/series error:', e);
     return res.status(500).json({ error: 'server' });
   }
-}
-
-/* ---- Rutas canónicas (las que usa tu front) ---- */
-// /api/simulations/:clientid/latest
-router.get('/:clientid/latest', getLatest);
-// /api/simulations/:clientid/series
-router.get('/:clientid/series', getSeries);
-
-/* ---- Compatibilidad con el formato antiguo por si el front o Postman apuntan así ---- */
-// /api/simulations/latest/:clientid
-router.get('/latest/:clientid', getLatest);
-// /api/simulations/series/:clientid
-router.get('/series/:clientid', getSeries);
+});
 
 module.exports = router;
+
