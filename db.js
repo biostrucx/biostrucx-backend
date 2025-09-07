@@ -1,52 +1,61 @@
+// db.js
 const { MongoClient } = require('mongodb');
 
-let _client = null;
-let _db = null;
+const uri = process.env.MONGODB_URI;
+const dbName = process.env.MONGODB_DB || 'biostrucx';
+
+let client;
+let db;
 
 async function connect() {
-  if (_db) return _db;
-  const uri = process.env.MONGODB_URI;
-  const dbName = process.env.MONGODB_DB || 'biostrucx';
-  if (!uri) throw new Error('Missing MONGODB_URI');
+  if (db) return db;
+  if (!uri) throw new Error('Missing MONGODB_URI env var');
 
-  _client = new MongoClient(uri, { maxPoolSize: 10 });
-  await _client.connect();
-  _db = _client.db(dbName);
-  return _db;
+  client = new MongoClient(uri, {
+    maxPoolSize: 10,
+    connectTimeoutMS: 20000,
+  });
+
+  await client.connect();
+  db = client.db(dbName);
+  return db;
 }
 
 function getDb() {
-  if (!_db) throw new Error('DB not connected');
-  return _db;
+  if (!db) throw new Error('Call connect() first');
+  return db;
 }
 
 async function col(name) {
-  return getDb().collection(name);
+  if (!db) await connect();
+  return db.collection(name);
 }
 
-// Crea índices de forma segura (ignora conflictos si ya existen)
+/**
+ * Crea índices necesarios. Idempotente (ignora conflictos).
+ */
 async function ensureIndexes() {
-  const c1 = await col('sensor_data');
-  try {
-    await c1.createIndex({ clientid: 1, ts: -1 }, { name: 'idx_clientid_ts' });
-  } catch (e) {
-    if (!String(e?.message || '').includes('already exists')) throw e;
-  }
+  const cSensor = await col('sensor_data');
+  const cSimRes = await col('simulation_result');
+  const cSimTs  = await col('simulation_ts');
 
-  const c2 = await col('simulation_ts');
-  try {
-    await c2.createIndex({ clientid: 1, ts: -1 }, { name: 'idx_clientid_ts' });
-  } catch (e) {
-    if (!String(e?.message || '').includes('already exists')) throw e;
-  }
+  const ops = [
+    cSensor.createIndex({ clientid: 1, ts: -1 }),
+    cSimRes.createIndex({ clientid: 1, ts: -1 }),
+    cSimTs.createIndex({ clientid: 1, ts: -1 }),
+  ];
 
-  const c3 = await col('simulation_result');
-  try {
-    await c3.createIndex({ clientid: 1, ts: -1 }, { name: 'idx_clientid_ts' });
-  } catch (e) {
-    if (!String(e?.message || '').includes('already exists')) throw e;
+  for (const p of ops) {
+    try { await p; } 
+    catch (e) {
+      // Ignora errores de índice existente / conflicto de opciones.
+      if (e?.codeName !== 'IndexOptionsConflict') {
+        console.warn('ensureIndexes warning:', e?.message || e);
+      }
+    }
   }
 }
 
 module.exports = { connect, getDb, col, ensureIndexes };
+
 
