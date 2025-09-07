@@ -1,8 +1,9 @@
+// routes/sensor_routes.js
 const express = require('express');
 const router = express.Router();
 const { col } = require('../db');
 
-// Convierte "5m" | "30s" | "2h" | "1d" a Date desde ahora - ventana
+// helper: window tipo "5m", "30s", "2h", "1d"
 function parseWindow(s = '5m') {
   const m = String(s).match(/^(\d+)([smhd])$/i);
   const n = m ? parseInt(m[1], 10) : 5;
@@ -14,25 +15,29 @@ function parseWindow(s = '5m') {
 // POST /api/sensors/:clientid
 router.post('/:clientid', async (req, res) => {
   try {
-    const clientid = String(req.params.clientid || '').toLowerCase().trim();
+    const clientid = String(req.params.clientid).toLowerCase();
     let { ts, ts_ms, voltage_dc, adc_raw, disp_mm } = req.body || {};
 
     // normaliza ts -> Date
-    let tsDate = null;
-    if (typeof ts_ms === 'number') tsDate = new Date(ts_ms);
-    else if (typeof ts === 'number') tsDate = new Date(ts);
-    else if (typeof ts === 'string') tsDate = new Date(ts);
-    else tsDate = new Date(); // fallback
+    let ts_date;
+    if (typeof ts_ms === 'number') ts_date = new Date(ts_ms);
+    else if (typeof ts === 'number') ts_date = new Date(ts);
+    else if (typeof ts === 'string') ts_date = new Date(ts);
+    else ts_date = new Date();
 
     const doc = {
-      ts: tsDate,
+      ts: ts_date,
       clientid,
       voltage_dc: Number(voltage_dc),
       adc_raw: Number(adc_raw),
       disp_mm: Number(disp_mm),
     };
 
-    if (Number.isNaN(doc.voltage_dc) || Number.isNaN(doc.adc_raw) || Number.isNaN(doc.disp_mm)) {
+    if (
+      Number.isNaN(doc.voltage_dc) ||
+      Number.isNaN(doc.adc_raw) ||
+      Number.isNaN(doc.disp_mm)
+    ) {
       return res.status(400).json({ ok: false, error: 'invalid_numeric_fields' });
     }
 
@@ -40,7 +45,7 @@ router.post('/:clientid', async (req, res) => {
     await c.insertOne(doc);
     res.json({ ok: true });
   } catch (err) {
-    console.error('POST /sensors error:', err);
+    console.error(err);
     res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
@@ -48,12 +53,12 @@ router.post('/:clientid', async (req, res) => {
 // GET /api/sensors/latest/:clientid
 router.get('/latest/:clientid', async (req, res) => {
   try {
-    const clientid = String(req.params.clientid || '').toLowerCase().trim();
+    const clientid = String(req.params.clientid).toLowerCase();
     const c = await col('sensor_data');
     const doc = await c.find({ clientid }).sort({ ts: -1 }).limit(1).toArray();
     res.json(doc[0] || null);
   } catch (e) {
-    console.error('GET /sensors/latest error:', e);
+    console.error(e);
     res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
@@ -61,19 +66,17 @@ router.get('/latest/:clientid', async (req, res) => {
 // GET /api/sensors/stream/:clientid?window=5m&limit=300
 router.get('/stream/:clientid', async (req, res) => {
   try {
-    const clientid = String(req.params.clientid || '').toLowerCase().trim();
+    const clientid = String(req.params.clientid).toLowerCase();
     const from = parseWindow(req.query.window || '5m');
     const limit = Math.min(parseInt(req.query.limit || '300', 10), 2000);
     const c = await col('sensor_data');
-
     const items = await c.find({ clientid, ts: { $gte: from } })
       .sort({ ts: 1 })
       .limit(limit)
       .toArray();
-
-    res.json(items); // [] si no hay datos
+    res.json(items);
   } catch (e) {
-    console.error('GET /sensors/stream error:', e);
+    console.error(e);
     res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
