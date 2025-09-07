@@ -1,75 +1,60 @@
 // routes/simulation_routes.js
 const express = require('express');
 const router = express.Router();
-const { getDb } = require('../db');
+const { col } = require('../db');
 
-// Acepta ?windowSec=300 o ?window=5m / 10m / 1h / 1d
-function parseWindowSec(q) {
-  const { windowSec, window } = q || {};
-  if (windowSec != null && !Number.isNaN(Number(windowSec))) {
-    const n = Number(windowSec);
-    return Math.max(1, Math.min(24 * 3600, n)); // [1s, 24h]
+// admite "window=5m" O "windowSec=300"
+function parseWindow(req) {
+  if (req.query.windowSec) {
+    const sec = Math.max(1, parseInt(req.query.windowSec, 10) || 300);
+    return new Date(Date.now() - sec * 1000);
   }
-  if (window) {
-    const m = String(window).trim().match(/^(\d+)\s*([smhd])$/i);
-    if (m) {
-      const n = Number(m[1]);
-      const unit = m[2].toLowerCase();
-      const factor = { s: 1, m: 60, h: 3600, d: 86400 }[unit];
-      if (factor) return Math.max(1, Math.min(24 * 3600, n * factor));
-    }
-  }
-  return 300; // por defecto 5 min
+  const s = String(req.query.window || '5m');
+  const m = s.match(/^(\d+)([smhd])$/i);
+  const n = m ? parseInt(m[1], 10) : 5;
+  const u = m ? m[2].toLowerCase() : 'm';
+  const ms = { s: 1e3, m: 6e4, h: 36e5, d: 864e5 }[u];
+  return new Date(Date.now() - n * ms);
 }
 
+// GET /api/simulations/:clientid/latest
 router.get('/:clientid/latest', async (req, res) => {
   try {
-    const db = getDb();
-    const clientid = String(req.params.clientid);
-
-    const doc = await db
-      .collection('simulation_result')
+    const clientid = String(req.params.clientid).toLowerCase();
+    const doc = await col('simulation_result')
       .find({ clientid })
-      .project({ _id: 0 })
       .sort({ ts: -1 })
       .limit(1)
-      .next();
+      .toArray();
 
-    res.set('Cache-Control', 'no-store');
-    return res.json(doc ?? null);
-  } catch (err) {
-    console.error('simulations/latest error:', err);
-    return res.status(500).json({ error: 'server' });
+    res.json(doc[0] || null);
+  } catch (e) {
+    console.error('GET /simulations/:clientid/latest error:', e);
+    res.status(500).json({ error: 'server' });
   }
 });
 
+// GET /api/simulations/:clientid/series?window=5m&limit=300
 router.get('/:clientid/series', async (req, res) => {
   try {
-    const db = getDb();
-    const clientid = String(req.params.clientid);
+    const clientid = String(req.params.clientid).toLowerCase();
+    const from = parseWindow(req);
+    const limit = Math.min(parseInt(req.query.limit || '300', 10), 2000);
 
-    const windowSec = parseWindowSec(req.query);
-    const limit = Math.min(2000, Math.max(1, Number(req.query.limit) || 300));
-    const since = new Date(Date.now() - windowSec * 1000);
-
-    // OJO: ‘simulation_ts’ debe tener docs con { clientid, ts: Date, fem_mm: Number }
-    const femArr = await db
-      .collection('simulation_ts')
-      .find(
-        { clientid, ts: { $gte: since } },
-        { projection: { _id: 0, ts: 1, fem_mm: 1 } }
-      )
-      .sort({ ts: 1 }) // ascendente para graficar
+    const items = await col('simulation_ts')
+      .find({ clientid, ts: { $gte: from } })
+      .sort({ ts: 1 })
       .limit(limit)
+      .project({ _id: 0, ts: 1, fem_mm: 1 })
       .toArray();
 
-    res.set('Cache-Control', 'no-store');
-    return res.json({ fem: femArr });
-  } catch (err) {
-    console.error('simulations/series error:', err);
-    return res.status(500).json({ error: 'server' });
+    res.json({ fem: items });
+  } catch (e) {
+    console.error('GET /simulations/:clientid/series error:', e);
+    res.status(500).json({ error: 'server' });
   }
 });
 
 module.exports = router;
+
 
