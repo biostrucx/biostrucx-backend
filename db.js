@@ -4,11 +4,11 @@ const { MongoClient, ServerApiVersion } = require('mongodb');
 let client;
 let db;
 
-const uri = process.env.mongo_uri;
-const dbName = process.env.mongo_db || 'biostrucx';
+const uri = process.env.mongodb_uri;
+const dbName = process.env.mongodb_db || 'biostrucx';
 
 function assertEnv() {
-  if (!uri) throw new Error('Missing mongo_uri env');
+  if (!uri) throw new Error('Missing mongodb_uri env');
 }
 
 async function connect() {
