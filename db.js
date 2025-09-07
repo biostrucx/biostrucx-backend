@@ -1,61 +1,46 @@
 // db.js
-const { MongoClient } = require('mongodb');
-
-const uri = process.env.mongodb_uri;
-const dbName = process.env.mongodb_db || 'biostrucx';
+const { MongoClient, ServerApiVersion } = require('mongodb');
 
 let client;
 let db;
 
+const uri = process.env.mongo_uri;
+const dbName = process.env.mongo_db || 'biostrucx';
+
+function assertEnv() {
+  if (!uri) throw new Error('Missing mongo_uri env');
+}
+
 async function connect() {
   if (db) return db;
-  if (!uri) throw new Error('Missing MONGODB_URI env var');
-
+  assertEnv();
   client = new MongoClient(uri, {
+    serverApi: {
+      version: ServerApiVersion.v1,
+      strict: true,
+      deprecationErrors: true,
+    },
     maxPoolSize: 10,
-    connectTimeoutMS: 20000,
   });
-
   await client.connect();
   db = client.db(dbName);
+
+  // índices idempotentes (no fallan si ya existen)
+  await Promise.allSettled([
+    db.collection('sensor_data').createIndex({ clientid: 1, ts: -1 }),
+    db.collection('simulation_ts').createIndex({ clientid: 1, ts: -1 }),
+    db.collection('simulation_result').createIndex({ clientid: 1, ts: -1 }),
+  ]);
+
+  console.log('Mongo connected to DB:', dbName);
   return db;
 }
 
-function getDb() {
-  if (!db) throw new Error('Call connect() first');
-  return db;
-}
-
-async function col(name) {
-  if (!db) await connect();
+function getDb() { return db; }
+function col(name) {
+  if (!db) throw new Error('DB not ready. Call connect() first.');
   return db.collection(name);
 }
 
-/**
- * Crea índices necesarios. Idempotente (ignora conflictos).
- */
-async function ensureIndexes() {
-  const cSensor = await col('sensor_data');
-  const cSimRes = await col('simulation_result');
-  const cSimTs  = await col('simulation_ts');
-
-  const ops = [
-    cSensor.createIndex({ clientid: 1, ts: -1 }),
-    cSimRes.createIndex({ clientid: 1, ts: -1 }),
-    cSimTs.createIndex({ clientid: 1, ts: -1 }),
-  ];
-
-  for (const p of ops) {
-    try { await p; } 
-    catch (e) {
-      // Ignora errores de índice existente / conflicto de opciones.
-      if (e?.codeName !== 'IndexOptionsConflict') {
-        console.warn('ensureIndexes warning:', e?.message || e);
-      }
-    }
-  }
-}
-
-module.exports = { connect, getDb, col, ensureIndexes };
-
+module.exports = { connect, getDb, col };
 
